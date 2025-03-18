@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { createOrUpdateMatch } from "../firebase-service"
+import { createOrUpdateMatch, getMatchByYoutubeId, getMatchEvents, type Match, type MatchEvent } from "../firebase-service"
+import { useToast } from "@/components/ui/use-toast"
 import VideoPlayer from "../components/video-player"
 
 type Player = {
@@ -20,23 +21,15 @@ type Player = {
   team: "home" | "away"
 }
 
-type Event = {
-  id: string
-  timestamp: number
-  timeString: string
-  playerId: string
+type Event = MatchEvent & {
   playerName: string
   playerNumber: number
-  eventType: string
 }
 
 export default function TrackPage() {
-  const [matchData, setMatchData] = useState<{
-    youtubeId: string
-    homeTeamName: string
-    awayTeamName: string
-    players: Player[]
-  } | null>(null)
+  const { toast } = useToast()
+  const [isLoading, setIsLoading] = useState(false)
+  const [matchData, setMatchData] = useState<Match | null>(null)
 
   const [events, setEvents] = useState<Event[]>([])
   const [currentTime, setCurrentTime] = useState(0)
@@ -55,25 +48,94 @@ export default function TrackPage() {
   const [isEditPlayerDialogOpen, setIsEditPlayerDialogOpen] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null)
 
-  // Load match data and events from localStorage
+  // Load match data and events
   useEffect(() => {
-    const savedMatchData = localStorage.getItem("matchSetup")
-    if (savedMatchData) {
-      setMatchData(JSON.parse(savedMatchData))
-    }
+    const loadMatchData = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const youtubeId = urlParams.get('youtubeId');
+      
+      if (!youtubeId) {
+        toast({
+          title: "Error",
+          description: "No YouTube ID provided",
+          variant: "destructive"
+        });
+        return;
+      }
 
-    const savedEvents = localStorage.getItem("matchEvents")
-    if (savedEvents) {
-      setEvents(JSON.parse(savedEvents))
-    }
-  }, [])
+      setIsLoading(true);
 
-  // Save events to localStorage whenever they change
+      try {
+        // Get latest data from Firebase
+        const match = await getMatchByYoutubeId(youtubeId);
+        if (!match) {
+          toast({
+            title: "Error",
+            description: "Match not found",
+            variant: "destructive"
+          });
+          return;
+        }
+
+        setMatchData(match);
+
+        if (match.id) {
+          try {
+            // Get events for the match
+            const matchEvents = await getMatchEvents(match.id);
+            const eventsWithPlayerInfo: Event[] = matchEvents.map(event => {
+              const player = match.players.find(p => p.id === event.playerId);
+              return {
+                ...event,
+                playerName: player?.name || "Unknown Player",
+                playerNumber: player?.number || 0
+              };
+            });
+            setEvents(eventsWithPlayerInfo);
+          } catch (error) {
+            console.error("Error loading match events:", error);
+            toast({
+              title: "Error",
+              description: "Failed to load match events",
+              variant: "destructive"
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error loading match data:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load match data",
+          variant: "destructive"
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadMatchData();
+  }, [toast]);
+
+  // Save events to Firebase whenever they change
   useEffect(() => {
-    if (events.length > 0) {
-      localStorage.setItem("matchEvents", JSON.stringify(events))
-    }
-  }, [events])
+    if (!matchData || !events.length) return;
+
+    const saveEvents = async () => {
+      try {
+        await createOrUpdateMatch(matchData, events);
+      } catch (error) {
+        console.error("Error saving events:", error);
+        toast({
+          title: "Error",
+          description: "Failed to save events to Firebase",
+          variant: "destructive"
+        });
+      }
+    };
+
+    const debounceTimer = setTimeout(saveEvents, 1000);
+    return () => clearTimeout(debounceTimer);
+  }, [events, matchData, toast]);
 
   const handleVideoPause = (time: number) => {
     console.log("Video paused at:", time)
@@ -96,12 +158,13 @@ export default function TrackPage() {
   }
 
   const trackEvent = () => {
-    if (!selectedPlayer || !selectedEventType) return
+    if (!selectedPlayer || !selectedEventType || !matchData) return;
 
     try {
       const timeString = formatTimeForDisplay(currentTime)
       const newEvent: Event = {
         id: `event_${Date.now()}`,
+        matchId: matchData.id || `temp_${matchData.youtubeId}`,
         timestamp: currentTime,
         timeString,
         playerId: selectedPlayer.id,
@@ -110,10 +173,7 @@ export default function TrackPage() {
         eventType: selectedEventType,
       }
 
-      // Add event to state (which will trigger the useEffect to save to localStorage)
       setEvents((prevEvents) => [...prevEvents, newEvent])
-
-      // Keep the selected player but reset the event type for quick consecutive logging
       setSelectedEventType("")
     } catch (error) {
       console.error("Error tracking event:", error)
@@ -121,6 +181,7 @@ export default function TrackPage() {
   }
 
   const deleteEvent = (eventId: string) => {
+    if (!eventId) return;
     setEvents(events.filter((event) => event.id !== eventId))
   }
 
@@ -139,47 +200,47 @@ export default function TrackPage() {
   }
 
   const submitEventsToFirebase = async () => {
-    if (events.length === 0 || !matchData) return;
+    if (!matchData) {
+      toast({
+        title: "Error",
+        description: "Cannot save events: No match data available",
+        variant: "destructive"
+      });
+      return;
+    }
 
     try {
       setIsSaving(true);
-
-      // Create a temporary ID for new matches
-      const tempMatchId = `temp_${matchData.youtubeId}`;
-
-      // Prepare events for Firebase
-      const firebaseEvents = events.map((event) => ({
-        matchId: tempMatchId,
-        timestamp: event.timestamp,
-        timeString: event.timeString,
-        playerId: event.playerId,
-        eventType: event.eventType,
-        additionalData: {
-          playerName: event.playerName,
-          playerNumber: event.playerNumber,
-        },
-      }));
-
-      // Create or update match with events
-      await createOrUpdateMatch({
-        youtubeId: matchData.youtubeId,
-        homeTeamName: matchData.homeTeamName,
-        awayTeamName: matchData.awayTeamName,
-        date: new Date(),
-        players: matchData.players
-      }, firebaseEvents);
-
+      const savedMatchId = await createOrUpdateMatch(matchData, events);
+      
+      // Update local match data with the saved ID
+      setMatchData(prev => prev ? { ...prev, id: savedMatchId } : null);
+      
+      // Update events with the new match ID
+      setEvents(prev => prev.map(event => ({
+        ...event,
+        matchId: savedMatchId
+      })));
+      
       setSaveSuccess(true);
+      toast({
+        title: "Success",
+        description: "Events saved to Firebase successfully"
+      });
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (error) {
       console.error("Error saving to Firebase:", error);
-      alert("Failed to save match data to Firebase. See console for details.");
+      toast({
+        title: "Error",
+        description: "Failed to save events to Firebase",
+        variant: "destructive"
+      });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const addNewPlayer = () => {
+  const addNewPlayer = async () => {
     if (!matchData || !newPlayerData.name || !newPlayerData.number) return;
 
     const newPlayer: Player = {
@@ -194,17 +255,30 @@ export default function TrackPage() {
       players: [...matchData.players, newPlayer]
     };
 
-    // Update state and localStorage
-    setMatchData(updatedMatchData);
-    localStorage.setItem("matchSetup", JSON.stringify(updatedMatchData));
+    try {
+      await createOrUpdateMatch(updatedMatchData, events);
+      setMatchData(updatedMatchData);
+      
+      // Reset form
+      setNewPlayerData({
+        name: "",
+        number: "",
+        team: "home"
+      });
+      setIsAddPlayerDialogOpen(false);
 
-    // Reset form
-    setNewPlayerData({
-      name: "",
-      number: "",
-      team: "home"
-    });
-    setIsAddPlayerDialogOpen(false);
+      toast({
+        title: "Success",
+        description: "Player added successfully"
+      });
+    } catch (error) {
+      console.error("Error adding player:", error);
+      toast({
+        title: "Error",
+        description: "Failed to add player",
+        variant: "destructive"
+      });
+    }
   };
 
   const openEditPlayerDialog = (player: Player) => {
@@ -212,7 +286,7 @@ export default function TrackPage() {
     setIsEditPlayerDialogOpen(true)
   }
 
-  const deletePlayer = (playerId: string) => {
+  const deletePlayer = async (playerId: string) => {
     if (!matchData) return;
 
     // Check if player has associated events
@@ -222,7 +296,8 @@ export default function TrackPage() {
         return;
       }
       // Remove events for this player
-      setEvents(events.filter(event => event.playerId !== playerId));
+      const updatedEvents = events.filter(event => event.playerId !== playerId);
+      setEvents(updatedEvents);
     }
 
     const updatedMatchData = {
@@ -230,16 +305,30 @@ export default function TrackPage() {
       players: matchData.players.filter(p => p.id !== playerId)
     };
 
-    setMatchData(updatedMatchData);
-    localStorage.setItem("matchSetup", JSON.stringify(updatedMatchData));
+    try {
+      await createOrUpdateMatch(updatedMatchData, events);
+      setMatchData(updatedMatchData);
+      
+      // If the deleted player was selected, deselect them
+      if (selectedPlayer?.id === playerId) {
+        setSelectedPlayer(null);
+      }
 
-    // If the deleted player was selected, deselect them
-    if (selectedPlayer?.id === playerId) {
-      setSelectedPlayer(null);
+      toast({
+        title: "Success",
+        description: "Player deleted successfully"
+      });
+    } catch (error) {
+      console.error("Error deleting player:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete player",
+        variant: "destructive"
+      });
     }
-  }
+  };
 
-  const saveEditedPlayer = () => {
+  const saveEditedPlayer = async () => {
     if (!matchData || !editingPlayer) return;
 
     const updatedPlayers = matchData.players.map(player =>
@@ -263,19 +352,32 @@ export default function TrackPage() {
       return event;
     });
 
-    setMatchData(updatedMatchData);
-    setEvents(updatedEvents);
-    localStorage.setItem("matchSetup", JSON.stringify(updatedMatchData));
-    localStorage.setItem("matchEvents", JSON.stringify(updatedEvents));
+    try {
+      await createOrUpdateMatch(updatedMatchData, updatedEvents);
+      setMatchData(updatedMatchData);
+      setEvents(updatedEvents);
+      
+      // Update selected player if it was the edited one
+      if (selectedPlayer?.id === editingPlayer.id) {
+        setSelectedPlayer(editingPlayer);
+      }
 
-    // Update selected player if it was the edited one
-    if (selectedPlayer?.id === editingPlayer.id) {
-      setSelectedPlayer(editingPlayer);
+      setIsEditPlayerDialogOpen(false);
+      setEditingPlayer(null);
+
+      toast({
+        title: "Success",
+        description: "Player updated successfully"
+      });
+    } catch (error) {
+      console.error("Error updating player:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update player",
+        variant: "destructive"
+      });
     }
-
-    setIsEditPlayerDialogOpen(false);
-    setEditingPlayer(null);
-  }
+  };
 
   if (!matchData) {
     return (
@@ -390,7 +492,7 @@ export default function TrackPage() {
                         <Button variant="outline" size="icon" onClick={() => openEditDialog(event)}>
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button variant="outline" size="icon" onClick={() => deleteEvent(event.id)}>
+                        <Button variant="outline" size="icon" onClick={() => event.id && deleteEvent(event.id)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>

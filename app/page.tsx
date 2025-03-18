@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { getMatchByYoutubeId, createOrUpdateMatch } from "./firebase-service"
+import { useToast } from "@/components/ui/use-toast"
 
 type Player = {
   id: string
@@ -21,6 +23,8 @@ type Player = {
 
 export default function SetupPage() {
   const router = useRouter()
+  const { toast } = useToast()
+  const [isLoading, setIsLoading] = useState(false)
   const [youtubeId, setYoutubeId] = useState("")
   const [homeTeamName, setHomeTeamName] = useState("")
   const [awayTeamName, setAwayTeamName] = useState("")
@@ -31,81 +35,94 @@ export default function SetupPage() {
   const [isEditPlayerDialogOpen, setIsEditPlayerDialogOpen] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null)
 
-  // Load existing match data if available
+  // Load match data when YouTube ID changes
   useEffect(() => {
-    const savedMatchData = localStorage.getItem("matchSetup")
-    if (savedMatchData) {
-      const data = JSON.parse(savedMatchData)
-      setYoutubeId(data.youtubeId)
-      setHomeTeamName(data.homeTeamName)
-      setAwayTeamName(data.awayTeamName)
-      setPlayers(data.players)
-    }
-  }, [])
+    const loadMatchData = async () => {
+      if (!youtubeId) return;
+      
+      setIsLoading(true);
+      try {
+        const match = await getMatchByYoutubeId(youtubeId);
+        if (match) {
+          setHomeTeamName(match.homeTeamName);
+          setAwayTeamName(match.awayTeamName);
+          setPlayers(match.players);
+        }
+      } catch (error) {
+        console.error("Error loading match:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load match data",
+          variant: "destructive"
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-  const addPlayer = () => {
-    if (!newPlayerName || !newPlayerNumber) return
+    loadMatchData();
+  }, [youtubeId, toast]);
+
+  const saveMatchData = async () => {
+    if (!youtubeId || !homeTeamName || !awayTeamName) return;
+
+    setIsLoading(true);
+    try {
+      const matchData = {
+        youtubeId,
+        homeTeamName,
+        awayTeamName,
+        players,
+        date: new Date()
+      };
+
+      await createOrUpdateMatch(matchData);
+
+      toast({
+        title: "Success",
+        description: "Match data saved successfully"
+      });
+    } catch (error) {
+      console.error("Error saving match:", error);
+      toast({
+        title: "Error",
+        description: "Failed to save match data",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const addPlayer = async () => {
+    if (!newPlayerName || !newPlayerNumber) return;
 
     const newPlayer: Player = {
       id: `player_${Date.now()}`,
       name: newPlayerName,
       number: Number.parseInt(newPlayerNumber),
       team: activeTeam,
-    }
+    };
 
     const updatedPlayers = [...players, newPlayer];
-    setPlayers(updatedPlayers)
+    setPlayers(updatedPlayers);
 
-    // Update localStorage to preserve changes
-    const matchData = {
-      youtubeId,
-      homeTeamName,
-      awayTeamName,
-      players: updatedPlayers,
-    }
-    localStorage.setItem("matchSetup", JSON.stringify(matchData))
+    // Save to Firebase
+    await saveMatchData();
 
-    setNewPlayerName("")
-    setNewPlayerNumber("")
-  }
+    setNewPlayerName("");
+    setNewPlayerNumber("");
+  };
 
-  const removePlayer = (playerId: string) => {
+  const removePlayer = async (playerId: string) => {
     const updatedPlayers = players.filter((player) => player.id !== playerId);
-    setPlayers(updatedPlayers)
+    setPlayers(updatedPlayers);
 
-    // Update localStorage to preserve changes
-    const matchData = {
-      youtubeId,
-      homeTeamName,
-      awayTeamName,
-      players: updatedPlayers,
-    }
-    localStorage.setItem("matchSetup", JSON.stringify(matchData))
-  }
+    // Save to Firebase
+    await saveMatchData();
+  };
 
-  const startTracking = () => {
-    if (!youtubeId || !homeTeamName || !awayTeamName || players.length < 2) {
-      alert("Please fill in all required fields and add at least one player per team")
-      return
-    }
-
-    const matchData = {
-      youtubeId,
-      homeTeamName,
-      awayTeamName,
-      players,
-    }
-
-    localStorage.setItem("matchSetup", JSON.stringify(matchData))
-    router.push("/track")
-  }
-
-  const openEditPlayerDialog = (player: Player) => {
-    setEditingPlayer(player)
-    setIsEditPlayerDialogOpen(true)
-  }
-
-  const saveEditedPlayer = () => {
+  const saveEditedPlayer = async () => {
     if (!editingPlayer) return;
 
     const updatedPlayers = players.map(player =>
@@ -114,17 +131,31 @@ export default function SetupPage() {
 
     setPlayers(updatedPlayers);
 
-    // Update localStorage
-    const matchData = {
-      youtubeId,
-      homeTeamName,
-      awayTeamName,
-      players: updatedPlayers,
-    }
-    localStorage.setItem("matchSetup", JSON.stringify(matchData))
+    // Save to Firebase
+    await saveMatchData();
 
     setIsEditPlayerDialogOpen(false);
     setEditingPlayer(null);
+  };
+
+  const startTracking = async () => {
+    if (!youtubeId || !homeTeamName || !awayTeamName || players.length < 2) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all required fields and add at least one player per team",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Save current state before navigating
+    await saveMatchData();
+    router.push(`/track?youtubeId=${youtubeId}`);
+  };
+
+  const openEditPlayerDialog = (player: Player) => {
+    setEditingPlayer(player)
+    setIsEditPlayerDialogOpen(true)
   }
 
   const homePlayers = players.filter((p) => p.team === "home")

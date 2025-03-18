@@ -48,9 +48,33 @@ export type MatchEvent = {
 }
 
 // Firebase service functions
-export const createOrUpdateMatch = async (match: Match, events: MatchEvent[]): Promise<string> => {
+export const getMatchByYoutubeId = async (youtubeId: string): Promise<Match | null> => {
   try {
-    // Check if match with this youtubeId already exists
+    const matchesRef = collection(db, "matches");
+    const q = query(matchesRef, where("youtubeId", "==", youtubeId));
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+      return null;
+    }
+
+    const matchDoc = querySnapshot.docs[0];
+    const data = matchDoc.data();
+    const { events, ...matchData } = data;
+    
+    return {
+      id: matchDoc.id,
+      ...matchData,
+      date: data.date.toDate(),
+    } as Match;
+  } catch (error) {
+    console.error("Error getting match:", error);
+    throw error;
+  }
+};
+
+export const createOrUpdateMatch = async (match: Match, events: MatchEvent[] = []): Promise<string> => {
+  try {
     const matchesRef = collection(db, "matches");
     const q = query(matchesRef, where("youtubeId", "==", match.youtubeId));
     const querySnapshot = await getDocs(q);
@@ -62,10 +86,12 @@ export const createOrUpdateMatch = async (match: Match, events: MatchEvent[]): P
       
       await updateDoc(matchRef, {
         ...match,
-        events: events.map(event => ({
+        updatedAt: new Date(),
+        events: events.length > 0 ? events.map(event => ({
           ...event,
+          matchId: matchDoc.id,
           updatedAt: new Date()
-        }))
+        })) : matchDoc.data().events || []
       });
       
       return matchDoc.id;
@@ -74,12 +100,26 @@ export const createOrUpdateMatch = async (match: Match, events: MatchEvent[]): P
     // Create new match if it doesn't exist
     const docRef = await addDoc(matchesRef, {
       ...match,
-      date: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
       events: events.map(event => ({
         ...event,
+        matchId: match.id,
         createdAt: new Date()
       }))
     });
+
+    // Update events with the new match ID if they don't have one
+    if (events.length > 0) {
+      await updateDoc(docRef, {
+        events: events.map(event => ({
+          ...event,
+          matchId: docRef.id,
+          createdAt: new Date()
+        }))
+      });
+    }
+
     return docRef.id;
   } catch (error) {
     console.error("Error creating/updating match:", error);
@@ -94,7 +134,10 @@ export const getMatchEvents = async (matchId: string): Promise<MatchEvent[]> => 
       throw new Error("Match not found");
     }
     const matchData = matchDoc.data();
-    return matchData.events || [];
+    return (matchData.events || []).map((event: any) => ({
+      ...event,
+      matchId: matchDoc.id
+    }));
   } catch (error) {
     console.error("Error getting match events:", error);
     throw error;
@@ -112,6 +155,7 @@ export const getMatches = async (): Promise<Match[]> => {
       return {
         id: doc.id,
         ...matchData,
+        date: data.date.toDate(),
       } as Match;
     });
   } catch (error) {
