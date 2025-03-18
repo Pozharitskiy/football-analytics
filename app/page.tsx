@@ -1,14 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { PlusCircle, Trash2, ArrowRight, Youtube } from "lucide-react"
+import { PlusCircle, Trash2, ArrowRight, Youtube, Pencil } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 type Player = {
   id: string
@@ -26,6 +28,20 @@ export default function SetupPage() {
   const [newPlayerName, setNewPlayerName] = useState("")
   const [newPlayerNumber, setNewPlayerNumber] = useState("")
   const [activeTeam, setActiveTeam] = useState<"home" | "away">("home")
+  const [isEditPlayerDialogOpen, setIsEditPlayerDialogOpen] = useState(false)
+  const [editingPlayer, setEditingPlayer] = useState<Player | null>(null)
+
+  // Load existing match data if available
+  useEffect(() => {
+    const savedMatchData = localStorage.getItem("matchSetup")
+    if (savedMatchData) {
+      const data = JSON.parse(savedMatchData)
+      setYoutubeId(data.youtubeId)
+      setHomeTeamName(data.homeTeamName)
+      setAwayTeamName(data.awayTeamName)
+      setPlayers(data.players)
+    }
+  }, [])
 
   const addPlayer = () => {
     if (!newPlayerName || !newPlayerNumber) return
@@ -37,13 +53,34 @@ export default function SetupPage() {
       team: activeTeam,
     }
 
-    setPlayers([...players, newPlayer])
+    const updatedPlayers = [...players, newPlayer];
+    setPlayers(updatedPlayers)
+
+    // Update localStorage to preserve changes
+    const matchData = {
+      youtubeId,
+      homeTeamName,
+      awayTeamName,
+      players: updatedPlayers,
+    }
+    localStorage.setItem("matchSetup", JSON.stringify(matchData))
+
     setNewPlayerName("")
     setNewPlayerNumber("")
   }
 
   const removePlayer = (playerId: string) => {
-    setPlayers(players.filter((player) => player.id !== playerId))
+    const updatedPlayers = players.filter((player) => player.id !== playerId);
+    setPlayers(updatedPlayers)
+
+    // Update localStorage to preserve changes
+    const matchData = {
+      youtubeId,
+      homeTeamName,
+      awayTeamName,
+      players: updatedPlayers,
+    }
+    localStorage.setItem("matchSetup", JSON.stringify(matchData))
   }
 
   const startTracking = () => {
@@ -52,8 +89,6 @@ export default function SetupPage() {
       return
     }
 
-    // In a real app, you would save this data to Firebase/state management
-    // and then navigate to the tracking page
     const matchData = {
       youtubeId,
       homeTeamName,
@@ -61,11 +96,35 @@ export default function SetupPage() {
       players,
     }
 
-    // For demo purposes, we'll store in localStorage
+    localStorage.setItem("matchSetup", JSON.stringify(matchData))
+    router.push("/track")
+  }
+
+  const openEditPlayerDialog = (player: Player) => {
+    setEditingPlayer(player)
+    setIsEditPlayerDialogOpen(true)
+  }
+
+  const saveEditedPlayer = () => {
+    if (!editingPlayer) return;
+
+    const updatedPlayers = players.map(player =>
+      player.id === editingPlayer.id ? editingPlayer : player
+    );
+
+    setPlayers(updatedPlayers);
+
+    // Update localStorage
+    const matchData = {
+      youtubeId,
+      homeTeamName,
+      awayTeamName,
+      players: updatedPlayers,
+    }
     localStorage.setItem("matchSetup", JSON.stringify(matchData))
 
-    // Navigate to the tracking page
-    router.push("/track")
+    setIsEditPlayerDialogOpen(false);
+    setEditingPlayer(null);
   }
 
   const homePlayers = players.filter((p) => p.team === "home")
@@ -170,15 +229,19 @@ export default function SetupPage() {
 
                 {homePlayers.length > 0 ? (
                   <div className="border rounded-md">
-                    <div className="grid grid-cols-[1fr_auto_auto] gap-2 p-3 font-medium text-sm">
+                    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 p-3 font-medium text-sm">
                       <div>Name</div>
                       <div>Number</div>
                       <div></div>
+                      <div></div>
                     </div>
                     {homePlayers.map((player) => (
-                      <div key={player.id} className="grid grid-cols-[1fr_auto_auto] gap-2 p-3 border-t items-center">
+                      <div key={player.id} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 p-3 border-t items-center">
                         <div>{player.name}</div>
                         <div className="font-mono">{player.number}</div>
+                        <Button variant="ghost" size="icon" onClick={() => openEditPlayerDialog(player)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => removePlayer(player.id)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -218,15 +281,19 @@ export default function SetupPage() {
 
                 {awayPlayers.length > 0 ? (
                   <div className="border rounded-md">
-                    <div className="grid grid-cols-[1fr_auto_auto] gap-2 p-3 font-medium text-sm">
+                    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 p-3 font-medium text-sm">
                       <div>Name</div>
                       <div>Number</div>
                       <div></div>
+                      <div></div>
                     </div>
                     {awayPlayers.map((player) => (
-                      <div key={player.id} className="grid grid-cols-[1fr_auto_auto] gap-2 p-3 border-t items-center">
+                      <div key={player.id} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 p-3 border-t items-center">
                         <div>{player.name}</div>
                         <div className="font-mono">{player.number}</div>
+                        <Button variant="ghost" size="icon" onClick={() => openEditPlayerDialog(player)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => removePlayer(player.id)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -251,6 +318,63 @@ export default function SetupPage() {
           </CardFooter>
         </Card>
       </div>
+
+      {/* Edit Player Dialog */}
+      <Dialog open={isEditPlayerDialogOpen} onOpenChange={setIsEditPlayerDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Player</DialogTitle>
+          </DialogHeader>
+
+          {editingPlayer && (
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-player-name">Player Name</Label>
+                <Input
+                  id="edit-player-name"
+                  value={editingPlayer.name}
+                  onChange={(e) => setEditingPlayer({ ...editingPlayer, name: e.target.value })}
+                  placeholder="Enter player name"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-player-number">Jersey Number</Label>
+                <Input
+                  id="edit-player-number"
+                  type="number"
+                  value={editingPlayer.number}
+                  onChange={(e) => setEditingPlayer({ ...editingPlayer, number: parseInt(e.target.value) })}
+                  placeholder="Enter jersey number"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-player-team">Team</Label>
+                <Select
+                  value={editingPlayer.team}
+                  onValueChange={(value: "home" | "away") => setEditingPlayer({ ...editingPlayer, team: value })}
+                >
+                  <SelectTrigger id="edit-player-team">
+                    <SelectValue placeholder="Select team" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="home">{homeTeamName || "Home Team"}</SelectItem>
+                    <SelectItem value="away">{awayTeamName || "Away Team"}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditPlayerDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={saveEditedPlayer}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

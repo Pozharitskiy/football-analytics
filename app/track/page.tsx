@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ArrowLeft, Save, Edit, Trash2 } from "lucide-react"
+import { ArrowLeft, Save, Edit, Trash2, UserPlus, Pencil } from "lucide-react"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
@@ -46,6 +46,14 @@ export default function TrackPage() {
   const [currentEditEvent, setCurrentEditEvent] = useState<Event | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [isAddPlayerDialogOpen, setIsAddPlayerDialogOpen] = useState(false)
+  const [newPlayerData, setNewPlayerData] = useState({
+    name: "",
+    number: "",
+    team: "home" as "home" | "away"
+  })
+  const [isEditPlayerDialogOpen, setIsEditPlayerDialogOpen] = useState(false)
+  const [editingPlayer, setEditingPlayer] = useState<Player | null>(null)
 
   // Load match data and events from localStorage
   useEffect(() => {
@@ -171,6 +179,104 @@ export default function TrackPage() {
     }
   };
 
+  const addNewPlayer = () => {
+    if (!matchData || !newPlayerData.name || !newPlayerData.number) return;
+
+    const newPlayer: Player = {
+      id: `player_${Date.now()}`,
+      name: newPlayerData.name,
+      number: parseInt(newPlayerData.number),
+      team: newPlayerData.team
+    };
+
+    const updatedMatchData = {
+      ...matchData,
+      players: [...matchData.players, newPlayer]
+    };
+
+    // Update state and localStorage
+    setMatchData(updatedMatchData);
+    localStorage.setItem("matchSetup", JSON.stringify(updatedMatchData));
+
+    // Reset form
+    setNewPlayerData({
+      name: "",
+      number: "",
+      team: "home"
+    });
+    setIsAddPlayerDialogOpen(false);
+  };
+
+  const openEditPlayerDialog = (player: Player) => {
+    setEditingPlayer(player)
+    setIsEditPlayerDialogOpen(true)
+  }
+
+  const deletePlayer = (playerId: string) => {
+    if (!matchData) return;
+
+    // Check if player has associated events
+    const hasEvents = events.some(event => event.playerId === playerId);
+    if (hasEvents) {
+      if (!confirm("This player has associated events. Deleting them will also delete their events. Continue?")) {
+        return;
+      }
+      // Remove events for this player
+      setEvents(events.filter(event => event.playerId !== playerId));
+    }
+
+    const updatedMatchData = {
+      ...matchData,
+      players: matchData.players.filter(p => p.id !== playerId)
+    };
+
+    setMatchData(updatedMatchData);
+    localStorage.setItem("matchSetup", JSON.stringify(updatedMatchData));
+
+    // If the deleted player was selected, deselect them
+    if (selectedPlayer?.id === playerId) {
+      setSelectedPlayer(null);
+    }
+  }
+
+  const saveEditedPlayer = () => {
+    if (!matchData || !editingPlayer) return;
+
+    const updatedPlayers = matchData.players.map(player =>
+      player.id === editingPlayer.id ? editingPlayer : player
+    );
+
+    const updatedMatchData = {
+      ...matchData,
+      players: updatedPlayers
+    };
+
+    // Update events with new player info
+    const updatedEvents = events.map(event => {
+      if (event.playerId === editingPlayer.id) {
+        return {
+          ...event,
+          playerName: editingPlayer.name,
+          playerNumber: editingPlayer.number
+        };
+      }
+      return event;
+    });
+
+    setMatchData(updatedMatchData);
+    setEvents(updatedEvents);
+    localStorage.setItem("matchSetup", JSON.stringify(updatedMatchData));
+    localStorage.setItem("matchEvents", JSON.stringify(updatedEvents));
+
+    // Update selected player if it was the edited one
+    if (selectedPlayer?.id === editingPlayer.id) {
+      setSelectedPlayer(editingPlayer);
+    }
+
+    setIsEditPlayerDialogOpen(false);
+    setEditingPlayer(null);
+  }
+
   if (!matchData) {
     return (
       <div className="container mx-auto py-10 px-4 text-center">
@@ -203,13 +309,19 @@ export default function TrackPage() {
   return (
     <div className="w-full px-4 mx-auto grid gap-4 md:gap-6 pb-10">
       <header className="py-4">
-        <div className="container flex items-center">
-          <Button variant="outline" size="icon" asChild>
-            <Link href="/">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
+        <div className="container flex items-center justify-between">
+          <div className="flex items-center">
+            <Button variant="outline" size="icon" asChild>
+              <Link href="/">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            </Button>
+            <h1 className="text-2xl font-bold ml-4">Football Match Tracker</h1>
+          </div>
+          <Button onClick={() => setIsAddPlayerDialogOpen(true)} variant="outline">
+            <UserPlus className="h-4 w-4 mr-2" />
+            Add Player
           </Button>
-          <h1 className="text-2xl font-bold ml-4">Football Match Tracker</h1>
         </div>
       </header>
 
@@ -299,11 +411,35 @@ export default function TrackPage() {
               {homePlayers.map((player) => (
                 <div
                   key={player.id}
-                  className={`border rounded-md p-2 text-center cursor-pointer transition-colors ${
+                  className={`relative border rounded-md p-2 text-center cursor-pointer transition-colors ${
                     selectedPlayer?.id === player.id ? "bg-primary text-primary-foreground" : "hover:bg-accent"
                   }`}
                   onClick={() => setSelectedPlayer(player)}
                 >
+                  <div className="absolute top-1 right-1 flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEditPlayerDialog(player);
+                      }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deletePlayer(player.id);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
                   <div className="text-lg font-bold">{player.number}</div>
                   <div className="text-sm truncate">{player.name}</div>
                 </div>
@@ -317,11 +453,35 @@ export default function TrackPage() {
               {awayPlayers.map((player) => (
                 <div
                   key={player.id}
-                  className={`border rounded-md p-2 text-center cursor-pointer transition-colors ${
+                  className={`relative border rounded-md p-2 text-center cursor-pointer transition-colors ${
                     selectedPlayer?.id === player.id ? "bg-primary text-primary-foreground" : "hover:bg-accent"
                   }`}
                   onClick={() => setSelectedPlayer(player)}
                 >
+                  <div className="absolute top-1 right-1 flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEditPlayerDialog(player);
+                      }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deletePlayer(player.id);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
                   <div className="text-lg font-bold">{player.number}</div>
                   <div className="text-sm truncate">{player.name}</div>
                 </div>
@@ -346,6 +506,61 @@ export default function TrackPage() {
           </div>
         </div>
       </main>
+
+      {/* Add Player Dialog */}
+      <Dialog open={isAddPlayerDialogOpen} onOpenChange={setIsAddPlayerDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add New Player</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="player-name">Player Name</Label>
+              <Input
+                id="player-name"
+                value={newPlayerData.name}
+                onChange={(e) => setNewPlayerData({ ...newPlayerData, name: e.target.value })}
+                placeholder="Enter player name"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="player-number">Jersey Number</Label>
+              <Input
+                id="player-number"
+                type="number"
+                value={newPlayerData.number}
+                onChange={(e) => setNewPlayerData({ ...newPlayerData, number: e.target.value })}
+                placeholder="Enter jersey number"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="player-team">Team</Label>
+              <Select
+                value={newPlayerData.team}
+                onValueChange={(value: "home" | "away") => setNewPlayerData({ ...newPlayerData, team: value })}
+              >
+                <SelectTrigger id="player-team">
+                  <SelectValue placeholder="Select team" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="home">{homeTeamName}</SelectItem>
+                  <SelectItem value="away">{awayTeamName}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAddPlayerDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={addNewPlayer}>Add Player</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Event Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
@@ -446,6 +661,63 @@ export default function TrackPage() {
               Cancel
             </Button>
             <Button onClick={saveEditedEvent}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Player Dialog */}
+      <Dialog open={isEditPlayerDialogOpen} onOpenChange={setIsEditPlayerDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Player</DialogTitle>
+          </DialogHeader>
+
+          {editingPlayer && (
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-player-name">Player Name</Label>
+                <Input
+                  id="edit-player-name"
+                  value={editingPlayer.name}
+                  onChange={(e) => setEditingPlayer({ ...editingPlayer, name: e.target.value })}
+                  placeholder="Enter player name"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-player-number">Jersey Number</Label>
+                <Input
+                  id="edit-player-number"
+                  type="number"
+                  value={editingPlayer.number}
+                  onChange={(e) => setEditingPlayer({ ...editingPlayer, number: parseInt(e.target.value) })}
+                  placeholder="Enter jersey number"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-player-team">Team</Label>
+                <Select
+                  value={editingPlayer.team}
+                  onValueChange={(value: "home" | "away") => setEditingPlayer({ ...editingPlayer, team: value })}
+                >
+                  <SelectTrigger id="edit-player-team">
+                    <SelectValue placeholder="Select team" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="home">{homeTeamName}</SelectItem>
+                    <SelectItem value="away">{awayTeamName}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditPlayerDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={saveEditedPlayer}>Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
