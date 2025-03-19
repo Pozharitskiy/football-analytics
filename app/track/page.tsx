@@ -398,7 +398,7 @@ export default function TrackPage() {
   const eventTypes = [
     "Pass",
     "Bad pass",
-    "Receiving",
+    "Bad dribble",
     "Bad receiving",
     "Shot on target",
     "Shot off target",
